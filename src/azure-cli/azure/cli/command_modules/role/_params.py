@@ -215,6 +215,9 @@ def load_arguments(self, _):
             # general credential arguments
             c.argument('years', type=int, default=None, arg_group='Credential',
                        help='Number of years for which the credentials will be valid. Default: 1 year')
+            c.argument('months', type=int, default=None, arg_group='Credential',
+                       help='Number of months for which the credentials will be valid. Can be used with --years. '
+                            'Default: 1 year if neither is specified.')
             c.argument('append', action='store_true', arg_group='Credential',
                        help='Append the new credential instead of overwriting.')
             c.argument('end_date', default=None, arg_group='Credential',

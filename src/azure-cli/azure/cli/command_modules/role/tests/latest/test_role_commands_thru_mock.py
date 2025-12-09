@@ -3,6 +3,7 @@
 # Licensed under the MIT License. See License.txt in the project root for license information.
 # --------------------------------------------------------------------------------------------
 
+import datetime
 import json
 import os
 import tempfile
@@ -12,6 +13,8 @@ from unittest import mock
 
 from azure.mgmt.authorization.models import RoleDefinition
 from knack.util import CLIError
+
+from dateutil.relativedelta import relativedelta
 
 from azure.cli.command_modules.role.custom import (create_role_definition,
                                                    update_role_definition,
@@ -190,6 +193,50 @@ class TestRoleMocked(unittest.TestCase):
         self.assertEqual(result['appId'], MOCKED_APP_APP_ID)
         self.assertEqual(result['password'], MOCKED_PASSWORD)
 
+    @mock.patch('azure.cli.command_modules.role.custom._application_add_password', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom.create_application', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom._graph_client_factory', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom._auth_client_factory', autospec=True)
+    def test_create_for_rbac_months_only_sets_expiry(self, auth_client_mock, graph_client_mock,
+                                                     create_app_mock, add_password_mock):
+        faked_role_client = mock.MagicMock()
+        auth_client_mock.return_value = faked_role_client
+        faked_role_client.config.subscription_id = self.subscription_id
+
+        faked_graph_client = mock.MagicMock()
+        graph_client_mock.return_value = faked_graph_client
+        faked_graph_client.service_principal_create.return_value = MOCKED_SP
+
+        def _mock_create_app(cmd, client, display_name, **kwargs):
+            start_date = kwargs['start_date']
+            end_date = kwargs['end_date']
+            delta = relativedelta(end_date, start_date)
+            self.assertEqual(delta.years, 0)
+            self.assertEqual(delta.months, 6)
+            return {
+                'appId': MOCKED_APP_APP_ID,
+                'id': MOCKED_APP_ID,
+                'displayName': display_name,
+                'passwordCredentials': []
+            }
+
+        def _mock_add_password(client, app, display_name, start_date, end_date):
+            delta = relativedelta(end_date, start_date)
+            self.assertEqual(delta.years, 0)
+            self.assertEqual(delta.months, 6)
+            return {'secretText': MOCKED_PASSWORD}
+
+        create_app_mock.side_effect = _mock_create_app
+        add_password_mock.side_effect = _mock_add_password
+
+        cmd = mock.MagicMock()
+        cmd.cli_ctx = DummyCli()
+        result = create_service_principal_for_rbac(cmd, MOCKED_APP_DISPLAY_NAME, months=6)
+
+        self.assertEqual(result['displayName'], MOCKED_APP_DISPLAY_NAME)
+        self.assertEqual(result['appId'], MOCKED_APP_APP_ID)
+        self.assertEqual(result['password'], MOCKED_PASSWORD)
+
     @mock.patch('azure.cli.command_modules.role.custom._auth_client_factory', autospec=True)
     @mock.patch('azure.cli.command_modules.role.custom._graph_client_factory', autospec=True)
     @mock.patch('azure.cli.command_modules.role.custom.logger', autospec=True)
@@ -225,6 +272,50 @@ class TestRoleMocked(unittest.TestCase):
         self.assertEqual(result['appId'], MOCKED_APP_APP_ID)
         self.assertTrue(logger_mock.warning.called)  # we should warn 'years' will be dropped
         self.assertTrue(faked_graph_client.application_create.called)
+
+    @mock.patch('azure.cli.command_modules.role.custom._create_self_signed_cert_with_keyvault', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom.create_application', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom._graph_client_factory', autospec=True)
+    @mock.patch('azure.cli.command_modules.role.custom._auth_client_factory', autospec=True)
+    def test_create_for_rbac_keyvault_cert_honors_months(self, auth_client_mock, graph_client_mock,
+                                                         create_app_mock, kv_cert_mock):
+        faked_role_client = mock.MagicMock()
+        auth_client_mock.return_value = faked_role_client
+        faked_role_client.config.subscription_id = self.subscription_id
+
+        faked_graph_client = mock.MagicMock()
+        graph_client_mock.return_value = faked_graph_client
+        faked_graph_client.service_principal_create.return_value = MOCKED_SP
+
+        def _mock_create_app(cmd, client, display_name, **kwargs):
+            start_date = kwargs['start_date']
+            end_date = kwargs['end_date']
+            delta = relativedelta(end_date, start_date)
+            total_months = delta.years * 12 + delta.months
+            self.assertGreaterEqual(total_months, 17)
+            self.assertLessEqual(total_months, 18)
+            return {
+                'appId': MOCKED_APP_APP_ID,
+                'id': MOCKED_APP_ID,
+                'displayName': display_name,
+                'passwordCredentials': []
+            }
+
+        def _mock_kv_cert(cli_ctx, validity_months, keyvault, keyvault_cert_name):
+            self.assertEqual(validity_months, 18)
+            start = datetime.datetime.now(datetime.timezone.utc)
+            return 'cert', None, start, start + relativedelta(months=validity_months)
+
+        create_app_mock.side_effect = _mock_create_app
+        kv_cert_mock.side_effect = _mock_kv_cert
+
+        cmd = mock.MagicMock()
+        cmd.cli_ctx = DummyCli()
+        result = create_service_principal_for_rbac(cmd, MOCKED_APP_DISPLAY_NAME,
+                                                   create_cert=True, keyvault='kv', years=1, months=6)
+
+        self.assertEqual(result['displayName'], MOCKED_APP_DISPLAY_NAME)
+        self.assertEqual(result['appId'], MOCKED_APP_APP_ID)
 
     @mock.patch('azure.cli.command_modules.role.custom._graph_client_factory', autospec=True)
     def test_reset_credentials_password(self, graph_client_mock):

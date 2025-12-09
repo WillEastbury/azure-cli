@@ -790,14 +790,14 @@ def _resolve_application(client, identifier):
 
 
 def reset_application_credential(cmd, client, identifier, create_cert=False, cert=None, years=None,
-                                 end_date=None, keyvault=None, append=False, display_name=None):
+                                 end_date=None, keyvault=None, append=False, display_name=None, months=None):
     app = show_application(client, identifier)
     if not app:
         raise CLIError("can't find an application matching '{}'".format(identifier))
     result = _reset_credential(
         cmd, app, client.application_add_password, client.application_remove_password,
         client.application_update, create_cert=create_cert, cert=cert, years=years,
-        end_date=end_date, keyvault=keyvault, append=append, display_name=display_name)
+        end_date=end_date, keyvault=keyvault, append=append, display_name=display_name, months=months)
     result['tenant'] = client.tenant
     return result
 
@@ -1093,7 +1093,7 @@ def list_service_principals(cmd, client,  # pylint: disable=unused-argument
 
 
 def reset_service_principal_credential(cmd, client, identifier, create_cert=False, cert=None, years=None,
-                                       end_date=None, keyvault=None, append=False, display_name=None):
+                                       end_date=None, keyvault=None, append=False, display_name=None, months=None):
     sp = show_service_principal(client, identifier)
     if not sp:
         raise CLIError("can't find an service principal matching '{}'".format(identifier))
@@ -1102,7 +1102,7 @@ def reset_service_principal_credential(cmd, client, identifier, create_cert=Fals
         client.service_principal_add_password, client.service_principal_remove_password,
         client.service_principal_update,
         create_cert=create_cert, cert=cert, years=years,
-        end_date=end_date, keyvault=keyvault, append=append, display_name=display_name)
+        end_date=end_date, keyvault=keyvault, append=append, display_name=display_name, months=months)
     result['tenant'] = client.tenant
     return result
 
@@ -1142,7 +1142,7 @@ def create_service_principal_for_rbac(
         service_management_reference=None,
         create_password=True,
         years=None, create_cert=False, cert=None, scopes=None, role=None,
-        show_auth_in_json=None, skip_assignment=False, keyvault=None):
+        show_auth_in_json=None, skip_assignment=False, keyvault=None, months=None):
     import time
 
     if role and not scopes or not role and scopes:
@@ -1150,7 +1150,12 @@ def create_service_principal_for_rbac(
 
     graph_client = _graph_client_factory(cmd.cli_ctx)
 
-    years = years or 1
+    years = 0 if years is None else int(years)
+    months = 0 if months is None else int(months)
+    if years < 0 or months < 0:
+        raise ArgumentUsageError("Usage error: --years and --months must be non-negative.")
+    if years == 0 and months == 0:
+        years = 1  # Preserve existing default of 1 year when nothing is supplied.
     _RETRY_TIMES = 36
     existing_sps = None
 
@@ -1164,7 +1169,8 @@ def create_service_principal_for_rbac(
         existing_sps = list(graph_client.service_principal_list(filter=query_exp))
 
     app_start_date = datetime.datetime.now(datetime.timezone.utc)
-    app_end_date = app_start_date + relativedelta(years=years or 1)
+    expiry_delta = relativedelta(years=years, months=months)
+    app_end_date = app_start_date + expiry_delta
 
     use_cert = False
     public_cert_string = None
@@ -1177,7 +1183,7 @@ def create_service_principal_for_rbac(
         use_cert = True
         public_cert_string, cert_file, cert_start_date, cert_end_date = \
             _process_certificate(
-                cmd.cli_ctx, years, app_start_date, app_end_date, cert, create_cert, keyvault)
+                cmd.cli_ctx, years, app_start_date, app_end_date, cert, create_cert, keyvault, months=months)
 
         app_start_date, app_end_date, cert_start_date, cert_end_date = \
             _validate_app_dates(app_start_date, app_end_date, cert_start_date, cert_end_date)
@@ -1298,7 +1304,7 @@ def _resolve_service_principal(client, identifier):
     raise error
 
 
-def _process_certificate(cli_ctx, years, app_start_date, app_end_date, cert, create_cert, keyvault):
+def _process_certificate(cli_ctx, years, app_start_date, app_end_date, cert, create_cert, keyvault, months=0):
     # The rest of the scenarios involve certificates
     public_cert_string = None
     cert_file = None
@@ -1317,8 +1323,9 @@ def _process_certificate(cli_ctx, years, app_start_date, app_end_date, cert, cre
             _create_self_signed_cert(app_start_date, app_end_date)
     elif create_cert and keyvault:
         # 5 - Create self-signed cert in KeyVault
+        total_months = int(years * 12 + months)
         public_cert_string, cert_file, cert_start_date, cert_end_date = \
-            _create_self_signed_cert_with_keyvault(cli_ctx, years, keyvault, cert)
+            _create_self_signed_cert_with_keyvault(cli_ctx, total_months, keyvault, cert)
     elif keyvault:
         # 6 - Use existing cert from KeyVault
         vault_base = 'https://{}{}/'.format(keyvault, cli_ctx.cloud.suffixes.keyvault_dns)
@@ -1412,7 +1419,7 @@ def _create_self_signed_cert(start_date, end_date):  # pylint: disable=too-many-
     return cert_string, creds_file, cert_start_date, cert_end_date
 
 
-def _create_self_signed_cert_with_keyvault(cli_ctx, years, keyvault, keyvault_cert_name):  # pylint: disable=too-many-locals
+def _create_self_signed_cert_with_keyvault(cli_ctx, validity_months, keyvault, keyvault_cert_name):  # pylint: disable=too-many-locals
     from azure.cli.command_modules.keyvault._validators import build_certificate_policy
     vault_base_url = 'https://{}{}/'.format(keyvault, cli_ctx.cloud.suffixes.keyvault_dns)
     kv_client = _get_keyvault_cert_client(cli_ctx, vault_base_url)
@@ -1447,7 +1454,7 @@ def _create_self_signed_cert_with_keyvault(cli_ctx, years, keyvault, keyvault_ce
                 'keyCertSign'
             ],
             'subject': 'CN=KeyVault Generated',
-            'validity_in_months': int(years * 12)
+            'validity_in_months': int(validity_months)
         }
     }
     policyObj = build_certificate_policy(cli_ctx, cert_policy)
@@ -1671,7 +1678,7 @@ def _build_key_credentials(key_value=None, key_type=None, key_usage=None,
 
 def _reset_credential(cmd, graph_object, add_password_func, remove_password_func, patch_func,
                       create_cert=False, cert=None, years=None,
-                      end_date=None, keyvault=None, append=False, display_name=None):
+                      end_date=None, keyvault=None, append=False, display_name=None, months=None):
     # pylint: disable=too-many-locals
     """Reset passwordCredentials and keyCredentials properties for application or service principal.
     Application and service principal share the same interface for operating credentials.
@@ -1690,16 +1697,22 @@ def _reset_credential(cmd, graph_object, add_password_func, remove_password_func
     # https://github.com/Azure/azure-cli/issues/20561
 
     app_start_date = datetime.datetime.now(datetime.timezone.utc)
-    if years is not None and end_date is not None:
+    if (years is not None or months is not None) and end_date is not None:
         raise CLIError('usage error: --years | --end-date')
     if end_date is None:
-        years = years or 1
-        app_end_date = app_start_date + relativedelta(years=years)
+        years = 0 if years is None else int(years)
+        months = 0 if months is None else int(months)
+        if years < 0 or months < 0:
+            raise CLIError('usage error: --years and --months must be non-negative')
+        if years == 0 and months == 0:
+            years = 1
+        app_end_date = app_start_date + relativedelta(years=years, months=months)
     else:
         app_end_date = dateutil.parser.parse(end_date)
         if app_end_date.tzinfo is None:
             app_end_date = app_end_date.replace(tzinfo=datetime.timezone.utc)
         years = (app_end_date - app_start_date).days / 365
+        months = 0
 
     # Created password
     password = None
@@ -1722,7 +1735,7 @@ def _reset_credential(cmd, graph_object, add_password_func, remove_password_func
     else:
         public_cert_string, cert_file, cert_start_date, cert_end_date = \
             _process_certificate(cmd.cli_ctx, years, app_start_date, app_end_date, cert, create_cert,
-                                 keyvault)
+                                 keyvault, months=months)
 
         app_start_date, app_end_date, cert_start_date, cert_end_date = \
             _validate_app_dates(app_start_date, app_end_date, cert_start_date, cert_end_date)
