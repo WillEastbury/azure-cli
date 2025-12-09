@@ -1323,7 +1323,7 @@ def _process_certificate(cli_ctx, years, app_start_date, app_end_date, cert, cre
             _create_self_signed_cert(app_start_date, app_end_date)
     elif create_cert and keyvault:
         # 5 - Create self-signed cert in KeyVault
-        total_months = int(years * 12 + months)
+        total_months = years * 12 + months
         public_cert_string, cert_file, cert_start_date, cert_end_date = \
             _create_self_signed_cert_with_keyvault(cli_ctx, total_months, keyvault, cert)
     elif keyvault:
@@ -1711,8 +1711,9 @@ def _reset_credential(cmd, graph_object, add_password_func, remove_password_func
         app_end_date = dateutil.parser.parse(end_date)
         if app_end_date.tzinfo is None:
             app_end_date = app_end_date.replace(tzinfo=datetime.timezone.utc)
-        years = (app_end_date - app_start_date).days / 365
-        months = 0
+        delta = relativedelta(app_end_date, app_start_date)
+        years = delta.years
+        months = delta.months
 
     # Created password
     password = None

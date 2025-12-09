@@ -186,7 +186,7 @@ class TestRoleMocked(unittest.TestCase):
         # action
         cmd = mock.MagicMock()
         cmd.cli_ctx = DummyCli()
-        result = create_service_principal_for_rbac(cmd, MOCKED_APP_DISPLAY_NAME, 12)
+        result = create_service_principal_for_rbac(cmd, MOCKED_APP_DISPLAY_NAME, years=12)
 
         # assert
         self.assertEqual(result['displayName'], MOCKED_APP_DISPLAY_NAME)
