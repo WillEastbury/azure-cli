@@ -1698,12 +1698,12 @@ def _reset_credential(cmd, graph_object, add_password_func, remove_password_func
 
     app_start_date = datetime.datetime.now(datetime.timezone.utc)
     if (years is not None or months is not None) and end_date is not None:
-        raise CLIError('usage error: --years | --end-date')
+        raise ArgumentUsageError('usage error: --years/--months | --end-date')
     if end_date is None:
         years = 0 if years is None else int(years)
         months = 0 if months is None else int(months)
         if years < 0 or months < 0:
-            raise CLIError('usage error: --years and --months must be non-negative')
+            raise ArgumentUsageError('usage error: --years and --months must be non-negative')
         if years == 0 and months == 0:
             years = 1
         app_end_date = app_start_date + relativedelta(years=years, months=months)
