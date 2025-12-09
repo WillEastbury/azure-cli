@@ -1142,7 +1142,7 @@ def create_service_principal_for_rbac(
         service_management_reference=None,
         create_password=True,
         years=None, create_cert=False, cert=None, scopes=None, role=None,
-        show_auth_in_json=None, skip_assignment=False, keyvault=None):
+        show_auth_in_json=None, skip_assignment=False, keyvault=None, months=None):
     import time
 
     if role and not scopes or not role and scopes:
@@ -1151,6 +1151,8 @@ def create_service_principal_for_rbac(
     graph_client = _graph_client_factory(cmd.cli_ctx)
 
     years = years or 1
+    months = 0 if months is None else int(months)
+
     _RETRY_TIMES = 36
     existing_sps = None
 
@@ -1164,7 +1166,10 @@ def create_service_principal_for_rbac(
         existing_sps = list(graph_client.service_principal_list(filter=query_exp))
 
     app_start_date = datetime.datetime.now(datetime.timezone.utc)
-    app_end_date = app_start_date + relativedelta(years=years or 1)
+
+    # Combined delta for both years + months
+    expiry_delta = relativedelta(years=years, months=months)
+    app_end_date = app_start_date + expiry_delta
 
     use_cert = False
     public_cert_string = None
@@ -1175,12 +1180,26 @@ def create_service_principal_for_rbac(
         # Key credential is created *at the same time* of application creation.
         # https://learn.microsoft.com/en-us/graph/application-rollkey-prooftoken
         use_cert = True
-        public_cert_string, cert_file, cert_start_date, cert_end_date = \
-            _process_certificate(
-                cmd.cli_ctx, years, app_start_date, app_end_date, cert, create_cert, keyvault)
-
-        app_start_date, app_end_date, cert_start_date, cert_end_date = \
-            _validate_app_dates(app_start_date, app_end_date, cert_start_date, cert_end_date)
+        # Certificates follow the same expiry (years + months)
+        cert_start_date = app_start_date
+        cert_end_date = cert_start_date + expiry_delta
+        
+        public_cert_string, cert_file, cert_start_date, cert_end_date = _process_certificate(
+            cmd.cli_ctx,
+            None,  # years is irrelevant when months are supported
+            cert_start_date,
+            cert_end_date,
+            cert,
+            create_cert,
+            keyvault
+        )
+        
+        app_start_date, app_end_date, cert_start_date, cert_end_date = _validate_app_dates(
+            app_start_date,
+            app_end_date,
+            cert_start_date,
+            cert_end_date
+        )
 
     aad_application = create_application(cmd,
                                          graph_client,
