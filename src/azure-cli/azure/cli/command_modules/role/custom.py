@@ -1096,7 +1096,7 @@ def reset_service_principal_credential(cmd, client, identifier, create_cert=Fals
                                        end_date=None, keyvault=None, append=False, display_name=None, months=None):
     sp = show_service_principal(client, identifier)
     if not sp:
-        raise CLIError("can't find an service principal matching '{}'".format(identifier))
+        raise CLIError("can't find a service principal matching '{}'".format(identifier))
     result = _reset_credential(
         cmd, sp,
         client.service_principal_add_password, client.service_principal_remove_password,
@@ -1711,6 +1711,7 @@ def _reset_credential(cmd, graph_object, add_password_func, remove_password_func
         app_end_date = dateutil.parser.parse(end_date)
         if app_end_date.tzinfo is None:
             app_end_date = app_end_date.replace(tzinfo=datetime.timezone.utc)
+        # Derive discrete years/months from the supplied end date for downstream certificate handling.
         delta = relativedelta(app_end_date, app_start_date)
         years = delta.years
         months = delta.months
